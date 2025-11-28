@@ -7,216 +7,269 @@ library(configr)
 library(cowplot)
 library(Hmisc)
 library(RColorBrewer)
-library(SCENIC)
-lilbrary(AUCell)
+library(sccomp)
+library(loo)
 
 
-######## Fig 3A. UMAP (Oxford PBMC)#########
+######## Fig 3B. UMAP (Morse Myeloid subset)#########
 
-Blood<-readRDS("Blood_obj.rds")
+Morse<-readRDS("Morse_Myeloid_MAY2024_f.rds")
 
-print(head(Blood@meta.data))
-DefaultAssay(object = Blood) <- "RNA"
-Idents(Blood)<-Blood@meta.data$CellType
-DimPlot(Blood, reduction = "umap", group.by="CellType",label=T,repel = T)
-ggsave('IPF_Blood_UMAP.pdf', dpi=900,width=7, height=5, units="in")
+print(head(Morse@meta.data))
+DefaultAssay(object = Morse) <- "RNA"
+Idents(Morse)<-Morse@meta.data$CellType_V4
+DimPlot(Morse, reduction = "umap", group.by="CellType_V4",label=T,repel = T)
+ggsave('Morse_Myeloid_UMAP.pdf', dpi=900,width=7, height=5, units="in")
 
 
-######## Fig 3B. UMAP (Monocyte Re-clustering )#########
+######## Fig 3C. Overlay of cNMF (from merged) into Morse UMAP #########
 
-Mono<-Blood[,Blood$CellType %in% c("cMono","ncMono")]
 
+# This should be the spectra from cNMF of 5 Merged data
+m_Spectra<-read.table("/BatchCorrected/Component_15/BatchCorrected.gene_spectra_score.k_15.dt_0_15.txt", sep='\t', row.names=1, header=TRUE)
+m_Spectra_tpm<-read.table("/BatchCorrected/Component_15/BatchCorrected.gene_spectra_tpm.k_15.dt_0_15.txt", sep='\t', row.names=1, header=TRUE)
 
+Morse<-readRDS("../../Morse_Macs_MAR24.rds")
 
-###prelim clustering
-Mono@active.assay <- "RNA"
-Mono <- NormalizeData(Mono)
-Mono <- FindVariableFeatures(Mono)
-Mono <- ScaleData(Mono)
-Mono <- RunPCA(object = Mono, verbose = FALSE)
-ElbowPlot(Mono, ndims = 50)
-Mono <- RunUMAP(object = Mono, dims = 1:20, verbose = FALSE)
-Mono <- FindNeighbors(object = Mono, dims = 1:20, verbose = FALSE)
-Mono <- FindClusters(object = Mono, verbose = FALSE, resolution = .7)
-DimPlot(object = Mono, label = TRUE, reduction="umap")
+exp_mat<-LayerData(Morse, assay="RNA", layer='data')
+common_gene<-intersect(colnames(m_Spectra),rownames(exp_mat))
 
-DimPlot(object = Mono, group.by="orig.ident", reduction="umap")
+length(common_gene)
 
+exp_mat_1<-exp_mat[rownames(exp_mat) %in% common_gene,]
+m_Spectra_1<-m_Spectra[,colnames(m_Spectra) %in% common_gene]
+m_Spectra_1<-m_Spectra[,rownames(exp_mat_1)]
+m_Spectra_1_tpm<-m_Spectra_tpm[,colnames(m_Spectra_tpm) %in% common_gene]
 
-Mono <- harmony::RunHarmony(Mono, group.by.vars = "orig.ident")
-Mono <- RunUMAP(object = Mono, dims = 1:20, verbose = FALSE, reduction = "harmony",reduction.name = "harmony.umap")
+all(colnames(m_Spectra_1)==rownames(exp_mat_1))
 
-Mono <- FindNeighbors(object = Mono, dims = 1:20, verbose = FALSE,reduction = "harmony",reduction.name = "harmony.umap")
-Mono <- FindClusters(object = Mono, verbose = FALSE, resolution =0.7)
+factor<-t(exp_mat_1)  %*% t(as.matrix(m_Spectra_1))
+colnames(factor)<-paste0("Merged_cNMF_",colnames(factor))
 
- DimPlot(object = Mono, label = TRUE, reduction="harmony.umap")
 
-Idents(Mono)<-Mono$RNA_snn_res.0.7
-markers <- FindAllMarkers(Mono, max.cells.per.ident = 200)
+Morse<- AddMetaData(
+  object = Morse,
+  metadata = factor
+)
 
 
-Mono <- RenameIdents(Mono, "0"="cMono S100A8/9/12Hi")
-Mono <- RenameIdents(Mono, "1"="cMono S100A8/9/12Hi")
-Mono <- RenameIdents(Mono, "2"="cMono MHCIIhi")
-Mono <- RenameIdents(Mono, "3"="NcMono")
-Mono <- RenameIdents(Mono, "4"="Mono-T Cell Doublets")
-Mono <- RenameIdents(Mono, "6"="Mono-T Cell Doublets")
-Mono <- RenameIdents(Mono, "5"="Type I IFN Mono")
-Mono <- RenameIdents(Mono, "7"="MonoDc")
+FeaturePlot_scCustom(seurat_object = Morse, features = colnames(factor), num_columns = 4)
+ggsave('merged_cNMF_on_Morse.pdf', dpi=900,width=16, height=10, units="in")
 
-DimPlot(Mono, reduction = "umap",label=T,repel = T)
-ggsave('Monocyte_UMAP.pdf', dpi=900,width=7, height=5, units="in")
 
 
+######## Fig 3D. Violin Plot of cNMF Score #########
 
-######## Fig 3E. DotPlot_(Monocyte_Cluster Markers)#########
 
-Mono1<-Mono[,Idents(Mono) %in% c("cMono S100A8/9/12Hi","cMono MHCIIhi","NcMono","Type I IFN Mono","MonoDc")]
-markers <- FindAllMarkers(Mono1, max.cells.per.ident = 200)
+# usage mtx as assay
+factor[factor<0]<-0
+usage_norm_f<-t(as.matrix(factor))
 
-#write.csv(markers,"Mono_Marker_List.csv")
+Morse[["cNMF_mOverlay"]]<-CreateAssayObject(usage_norm_f)
 
 
-top10<-markers %>% group_by(cluster) %>% top_n(n = 10, wt = avg_log2FC)
-top10_markers<-unique(top10$gene)
+Morse@active.assay<-"cNMF_mOverlay"
 
 
-  DotPlot(object = Mono1, assay="RNA", features  = top5_markers,cols="RdYlBu" ) + scale_y_discrete(limits = rev) +  geom_point(aes(size=pct.exp), shape = 21, colour="black", stroke=0.5) +
-     guides(size=guide_legend(override.aes=list(shape=21, colour="black", fill="white"))) + guides(size = guide_legend(title = "Percent\nExpressed"),color = guide_colorbar(title = "Average\nExpression"))+ theme(axis.text.x  =element_text( hjust=1, size=10,angle=90))
-ggsave('Monocyte_DotPlot.pdf', dpi=900,width=12, height=5, units="in")
+Morse1$CellType_v4 <-factor(Morse1$CellType_v4 ,levels=c("DCs","cMonos","ncMonos","HSP macs","IM","SPP1 hi macs","CXCL10+ Macs","Mac UD (transitional mono-mac)","SPP1 mid macs","IntmAM 1","MT Mac","Mac UD (AM_UD1)","IntmAM 2","CD206hi FN1hi AM" ,"FABP4hi AM","IGF-1 AM"))
 
+Morse1@active.assay<-"cNMF_mOverlay"
+Idents(Morse1)<-Morse1$CellType_v4
 
 
-######## Fig 3F. Volcano Plot (DEG, IPF vs HC in Monocytes)#########
-# (code below is repeated for each ncMono subsets)
 
-result<-read.delim("cMono_DEG_0.1.txt")
-result$geneid<-rownames(result)
+Morse2<-Morse1[,Morse1$Disease_Status_1 %in% c("IPF_LL","IPF_UL")]
+Morse2$Disease_Status_1<-factor(Morse2$Disease_Status_1,levels = c("IPF_UL","IPF_LL"))
 
+features1<-c("Merged-cNMF-1","Merged-cNMF-2","Merged-cNMF-4","Merged-cNMF-5","Merged-cNMF-7","Merged-cNMF-6","Merged-cNMF-9","Merged-cNMF-10")
 
-result$FDR <- ifelse(result$padj < 0.1 , "FDR < 0.1", "ns")
-result$DEG <- ifelse(result$padj < 0.1 & abs(result$log2FoldChange) > 1.0 , "FDR < 0.1 and |Log2FC| 1.0", "ns")
+#Save Horizontal 8x 8
+plot2 <- VlnPlot(Morse2, features1, stack = TRUE, sort = F, flip = TRUE,same.y.lims = T,split.by ="Disease_Status_1" , split.plot=T,cols=c("#C06CAB", "#D8A767")) +theme(axis.text.x = element_text(size = 15))
+ggsave('VlnPlot_merged_cNMF_on_Morse_Disease_Split.pdf', dpi=900,width=8, height=8, units="in")
 
-result1<-result[!(is.na(result$DEG)),]
 
 
-ggplot(result1, aes(x = log2FoldChange, y = -log10(padj))) +
-      geom_point(aes(color = DEG))  +ggtitle("cMono: IPF vs HC")+
-        scale_color_manual(values = c("red", "grey30")) + labs(x = "Log2 Fold Change") +
-        theme(legend.position = "bottom",axis.text=element_text(size=13), plot.title = element_text(size = 15, face = "bold"))+
-        geom_text_repel(
-              data = subset(result, DEG =="FDR < 0.1 and |Log2FC| 1.0"),
-              aes(label = geneid),
-              size = 3.5,
-              box.padding = unit(0.35, "lines"),
-              point.padding = unit(0.3, "lines")
-                )
-ggsave('cMono_Volcano.pdf', dpi=900,width=7, height=5, units="in")
 
+######## Fig 3E. Differential Abundance test in IPF LL vs UL (sccomp) #########
 
-######## Fig 3G. Regulon Activity Heatmap of IFN TFs(Monocyte subset)#########
 
-Blood<-readRDS("Blood_obj.rds")
+Morse$Disease_Status_1<-Morse$Disease_Status
+Morse$Disease_Status_1<-ifelse(Morse$Disease_Status %in% c("IPF(Lower Lobe)","IPF(Lower Lobe)_Mac_Deplet"),"IPF_LL",Morse$Disease_Status_1)
 
-Mono_b<-Blood[,Blood$CellType %in% ("cMono","ncMono")]
+Morse$Disease_Status_1<-ifelse(Morse$Disease_Status %in% c("IPF(Upper Lobe)"),"IPF_UL",Morse$Disease_Status_1)
 
+Morse$Disease_Status_1<-gsub("[(]","_",Morse$Disease_Status_1)
+Morse$Disease_Status_1<-gsub("[)]","",Morse$Disease_Status_1)
+Morse$Disease_Status_1<-gsub(" ","",Morse$Disease_Status_1)
 
-regulonAUC <- importAUCfromText("aucell_result.csv")
-meta<-as.data.frame(Mono_b@meta.data)
 
-meta$Group<-paste0(meta$CellType,"_",meta$Disease)
+res = Morse |>
+  sccomp_estimate(
+    formula_composition =  ~ 0+Disease,
+    .sample = Donor,
+    .cell_group = CellType_v4,
+    bimodal_mean_variability_association = TRUE,
+    cores = 1
+  )|>
+  sccomp_test(  contrasts =  c("DiseaseIPF_LL - DiseaseIPF_UL"))
 
 
-regulonActivity_byCellType <- sapply(split(rownames(meta), meta$Group),
-                              function(cells) rowMeans(getAUC(regulonAUC)[,cells]))
 
 
-head(regulonActivity_byCellType)
+plots1 = res |> plot()
 
-IFN_TF<-c(ELF1...,ATF3...,STAT2...,IRF8...,STAT1...,NFKB1...,IRF7...,USF1...,IRF2...,STAT3...,NR3C1...,ETV6...,KDM5A...,HIF1A...,RB1...,TCF4...,CHD1...,HCFC1...,IRF1...)
-IFN_TF_f<-stringr::str_replace(IFN_TF, pattern="...$", "(+)")
 
+plots1$credible_intervals_1D + theme(axis.text.y = element_text( size = 10)) +theme_bw()
+ggsave('Whisker Plot.pdf', dpi=900,width=7, height=5, units="in")
 
 
+################ Fig 3F LRT test between HC vs IPF_UL vs IPF LL #########################
+library(DESeq2)
+library(EnhancedVolcano)
+library(paletteer)
 
-TF_regulon<-regulonActivity_byCellType[rownames(regulonActivity_byCellType) %in% IFN_TF_f,]
-TF_regulon_Scaled <- t(scale(t(TF_regulon), center = T, scale=T))
 
+## LRT 
+Morse_sub<-Morse[,!(Morse$Donor %in% c("SC31DNOR","SC31NOR","SC45NOR","SC14NOR"))]
+table(Morse_sub$Disease_Status)
 
+Morse_sub$Disease_1<-Morse_sub$Disease_Status
 
-cairo_pdf("IFN_TFs_heatmap.pdf", height=8,width=5)
-pheatmap::pheatmap(TF_regulon_Scaled,cluster_cols=FALSE,cluster_rows=TRUE, border_color = "black",fontsize_row=7.0)
-dev.off()
+Morse_sub$Disease_1<-gsub("IPF[(]Lower Lobe[)]","IPF_L",Morse_sub$Disease_1)
+Morse_sub$Disease_1<-gsub("IPF_L_Mac_Deplet","IPF_L",Morse_sub$Disease_1)
+Morse_sub$Disease_1<-gsub("IPF[(]Upper Lobe[)]","IPF_U",Morse_sub$Disease_1)
+Morse_sub$Disease_1<-ifelse(Morse_sub$Disease=="Normal","Normal",Morse_sub$Disease_1)
 
-######## Fig 3H. DotPlot of IFN TF regulon activity comparison #########
 
-scenic <- read.csv("aucell1.csv")
+for (i in 1:length(Celltype)) {
 
-rownames(scenic) <- scenic[, 1]
-scenic <- t(as.matrix(scenic[, -1]))
 
+subs<-Morse_sub[,Morse_sub$CellType_v2 == Celltype[i]]
 
-Mono1[["SCENIC"]] <- CreateAssayObject(data = scenic[, Cells(Mono1)])
+mtx_aggr<-AggregateExpression(subs,assays = "RNA",slot="count",group.by = "Donor")
+cluster_counts<-as.data.frame(mtx_aggr$RNA)
 
-Mono1@active.assay <- "SCENIC"
 
+# Metadata generation
 
-Idents(Mono1)<-Mono1$CellType
+ metadata<-as.data.frame(subs@meta.data)
 
-for( cluster in unique(Mono1@active.ident)){
-  print(cluster)
+ meta_1<-metadata[,c("Donor","Disease_1")]
 
-  mk1 <- FindMarkers(Mono1[, Mono1@active.ident == cluster], "IPF", "HC", group.by="Disease", logfc.threshold = 0, assay = "SCENIC", slot = "data",  test.use = "LR",
-                                          max.cells.per.ident = 200)
-  mk1$TF <- rownames(mk1)
-  write.table(mk1, file=paste0(make.names(cluster), ".TF.network.cluster.diffsIPF_vs_HC.xls"), sep="\t", quote=FALSE, row.names = FALSE)
+ meta_f<-unique(meta_1)
 
+ rownames(meta_f)<-meta_f$Donor
+
+meta_order<-meta_f[order(meta_f$Disease_1),]
+
+ cluster_counts_f<-cluster_counts[,rownames(meta_order)]
+
+meta_final<-meta_order
+ # DESeq2 Run 
+
+ meta_final$Sample_Name<-as.factor(meta_final$Donor)
+ meta_final$Status<-as.factor(meta_final$Disease_1)
+
+ dds <- DESeqDataSetFromMatrix(cluster_counts_f,
+                               colData = meta_final,
+                               design = ~ Status)
+
+
+ #Prefilter
+ dds <- dds[rowSums(counts(dds))> 3, ]
+ rld <- rlog(dds, blind=TRUE)
+
+  dds <- DESeq(dds, test="LRT", reduced=~1)
+  res_LRT <- results(dds)
+
+  head(res_LRT[order(res_LRT$padj),], 10)
+
+  write.table(res_LRT,file =paste0(Celltype[15],"LRT_test_result.txt",sep="\t"))
+
+
+
+  #Subset gene with significance
+  sig_res_LRT <- res_LRT %>%
+                 data.frame() %>%
+                 tibble::rownames_to_column(var="gene") %>%
+                 as_tibble() %>%
+                 filter(padj < 0.05)
+
+dim(sig_res_LRT)
+
+  # Pull out sifnificant genes
+  sigLRT_genes <- sig_res_LRT %>%
+                  pull(gene)
+
+
+
+  # Obtain normalized count values for those significant genes
+
+
+
+ DEG_mat <- assay(rld)[ rownames(assay(rld))%in% sig_res_LRT$gene, colnames(assay(rld))%in% colnames(dds)]
+ df <- data.frame(Group = SummarizedExperiment::colData(dds)[,c("Status")], row.names = rownames(SummarizedExperiment::colData(dds)))
+ 
+
+ p<-pheatmap::pheatmap(DEG_mat, cluster_rows=TRUE, show_rownames=TRUE, cluster_cols=TRUE, annotation_col=df,scale="row", clustering_distance_rows = "correlation",clustering_distance_cols = "correlation", fontsize_row = 7.0)
+
+
+  row_anno <-as.data.frame(cutree(p$tree_row, 4))
+  colnames(row_anno) <- "Cluster"
+  row_anno$Cluster <- as.factor(row_anno$Cluster)
+  dev.off()
+
+pal1<-paletteer_c("ggthemes::Orange-Blue Diverging", 100)
+
+require(lattice)
+pdf(paste0(Celltype[i],"_DEG_LRT_Hmap_0.05_1.pdf"),width=8,height=6)
+ print(pheatmap::pheatmap(DEG_mat, cluster_rows=TRUE, color =rev(pal1),border_color = NA, show_rownames=TRUE, cluster_cols=TRUE, annotation_col=df,scale="row", clustering_distance_rows = "correlation",clustering_distance_cols = "correlation",annotation_row = row_anno,  fontsize_row = 1.0))
+ dev.off()
+
+ write.csv(row_anno,paste0(Celltype[i],"_Cluster_annotation.csv"))
 }
 
 
+########## Fig 5F. Pathway analysis ######################
+
+# (Repeated for each clusters for Celltypes)
+
+library(clusterProfiler)
+library(enrichplot)
+library(org.Hs.eg.db)
+library(ggnewscale)
+library(fgsea)
+library(dplyr)
+library(msigdbr)
+
+Gene_anno<-read.csv("Cluster_annotation.csv")
+
+Gene_GO<-Gene_anno[Gene_anno$Cluster =="1",]
+gene_up<-as.vector(Gene_GO$X)
 
 
-combn1<-read.csv("TF_FCandPadj_table_Mostafavi_Mono.csv")
-combn1$Regulon<-combn1$X
+########## GO  #########
 
 
-combn1$Regulon<-stringr::str_replace(combn1$Regulon, pattern="...$", "(+)")
-combn1$X<-NULL
+ego_up<-enrichGO(gene_up,OrgDb = org.Hs.eg.db,keyType = "SYMBOL",ont="all",pAdjustMethod = "BH",pvalueCutoff = 0.05,qvalueCutoff = 0.05)
+
+head(summary(ego_up))
+
+ego_up
+
+cluster_summary<-data.frame(ego_up)
+
+write.table(cluster_summary,"Cluster1_GO.txt",sep="\t")
+
+dotplot(ego_up, split="ONTOLOGY",label_format=100) + facet_grid(ONTOLOGY~., scale="free") + scale_fill_viridis(direction = -1)
 
 
 
-FC_mat<-combn1[,c(1,3,5,7,9,11)]
-pval_mat<-combn1[,c(2,4,6,8,10,11)]
+ego_BP<-enrichGO(gene_up, OrgDb= org.Mm.eg.db,keyType = "SYMBOL",ont="BP",pAdjustMethod = "BH",pvalueCutoff = 0.05,qvalueCutoff = 0.05)
+dotplot(ego_BP,showCategory=20,label_format=100)+ scale_fill_viridis(direction = -1)
 
-pcm_fc = melt(FC_mat, id = c("Regulon"))
-pcm_pval = melt(pval_mat, id = c("Regulon"))
+ego2_BP <- simplify(ego_BP)
+dotplot(ego2_BP,showCategory=20,label_format=100)+ scale_fill_viridis(direction = -1)
 
+cnetplot(ego2_BP, colorEdge = TRUE)
 
-
-pcm_fc$variable<-gsub("_log2FC","",pcm_fc$variable)
-pcm_pval$variable<-gsub("_Padj","",pcm_pval$variable)
-
-pcm_fc$adjP<-pcm_pval$value
-
-pcm_fc$adjP1<- -log(pcm_fc$adjP,10)
-pcm_fc$adjP<-NULL
-
- colnames(pcm_fc)<-c("Regulon","Celltype","log2FC","Log10FDR")
-
-
-  library(wesanderson)
- pal <- wes_palette("Zissou1", 100, type = "continuous")
- pal
-
-
- pcm_fc %>%
-      ggplot(aes(x=Celltype, y = Regulon)) +
-      geom_point( aes(color=log2FC,size= Log10FDR)) +
-      theme_bw()+  labs(size = "-Log10FDR") +scale_size(range = c(1, 8))+
-      theme_linedraw() + theme(panel.grid.major = element_blank()) +
-      theme(axis.text.x = element_text(angle = 45, hjust=1,size=10,face="bold"),axis.text.y = element_text(size=10,face="bold"),plot.margin = margin(0.5, 0.5, 0.5, 1.0, "cm")) +
-      scale_color_gradientn(colours = pal)+
-      geom_vline(xintercept = seq(1.5, length(unique(pcm_fc$Regulon)) - 0.5, 1), lwd = 0.05, colour = "grey92")+
-      geom_hline(yintercept = seq(1.5, length(unique(pcm_fc$Celltype)) - 0.5, 1), lwd = 0.05, colour = "grey93")
-
-ggsave('DotPlot_TFComparison_Mostafavi_Mono.pdf', dpi=900,width=4, height=6, units="in")
