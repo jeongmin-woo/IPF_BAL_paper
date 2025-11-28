@@ -1,134 +1,108 @@
-library(ggplot2)
-library(pheatmap)
-library(Seurat)
-library(SCENIC)
-lilbrary(AUCell)
-library(dplyr)
-library(viridis)
+require(Seurat)
+require(dplyr)
+require(Matrix)
+require(magrittr)
 library(scales)
-
-
-################ Fig 2A. DEG Volcano Plot ##################
-# (code below is repeated for each Macrophage subsets)
-
-result<-read.delim("AM 1_DEG_0.1.txt")
-result$geneid<-rownames(result)
-
-
-result$FDR <- ifelse(result$padj < 0.1 , "FDR < 0.1", "ns")
-result$DEG <- ifelse(result$padj < 0.1 & abs(result$log2FoldChange) > 1.0 , "FDR < 0.1 and |Log2FC| 1.0", "ns")
-
-result1<-result[!(is.na(result$DEG)),]
-
-
-ggplot(result1, aes(x = log2FoldChange, y = -log10(padj))) +
-      geom_point(aes(color = DEG))  +ggtitle("AM1: IPF vs HC")+
-        scale_color_manual(values = c("red", "grey30")) + labs(x = "Log2 Fold Change") +
-        theme(legend.position = "bottom",axis.text=element_text(size=13), plot.title = element_text(size = 15, face = "bold"))+
-        geom_text_repel(
-              data = subset(result, DEG =="FDR < 0.1 and |Log2FC| 1.0"),
-              aes(label = geneid),
-              size = 3.5,
-              box.padding = unit(0.35, "lines"),
-              point.padding = unit(0.3, "lines")
-                )
-ggsave('AM1_Volcano.pdf', dpi=900,width=7, height=5, units="in")
+library(ggplot2)
+library(configr)
+library(cowplot)
+library(Hmisc)
+library(RColorBrewer)
 
 
 
-################ Fig 2C. Heatmap (Regulon Activity score) ##################
+################ Fig 2A. UMAP ##################
 
-BAL<-readRDS("BAL_obj.rds")
+
+BAL<-readRDS("IPF_BAL.rds")
+
+print(head(BAL@meta.data))
+DefaultAssay(object = BAL) <- "RNA"
+Idents(BAL)<-BAL@meta.data$CellType_v2
+DimPlot(BAL, reduction = "umap", group.by="Celltype_v2",cols=c("#d8eab2","grey","grey52","#D62728","#E377C2","#9467BD","#FF9896","#C49C94","#2CA02C" ,"#BCBD22","#8C564B", "#F7B6D2", "#C5B0D5", "#FFBB78", "#AEC7E8" , "#98DF8A", "#1F77B4"),label=T,repel = T)
+ggsave('IPF_BAL_UMAP.pdf', dpi=900,width=7, height=5, units="in")
+
+
+################ Fig 2B. Top10 marker dotplot ##################
 
 BAL1<-BAL[,Idents(BAL) %in% c("FABP4 AM","IGF1+ AM","CD206hi FNhi AM","monoSPP1+ AM","CXCL10+ AMs")]
+markers <- FindAllMarkers(BAL1, max.cells.per.ident = 200)
 
 
-regulonAUC <- importAUCfromText("aucell_result.csv")
-meta<-as.data.frame(BAL1@meta.data)
+top10<-markers %>% group_by(cluster) %>% top_n(n = 10, wt = avg_log2FC)
+top10_markers<-unique(top10$gene)
 
-meta$Group<-paste0(meta$Celltype,"_",meta$Disease)
+Idents(BAL1)<-factor(BAL1$CellType_v2,levels = c("FABP4 AM","IGF1+ AM","CD206hi FNhi AM","CXCL10+ AMs","monoSPP1+ AM"))
+DotPlot(object = BAL1, assay="RNA", features  = top5_markers,cols="RdYlBu" ) + scale_y_discrete(limits = rev) +  geom_point(aes(size=pct.exp), shape = 21, colour="black", stroke=0.5) +
+    guides(size=guide_legend(override.aes=list(shape=21, colour="black", fill="white"))) + guides(size = guide_legend(title = "Percent\nExpressed"),color = guide_colorbar(title = "Average\nExpression"))+ theme(axis.text.x  =element_text( hjust=1, size=10,angle=90))
 
+ggsave('Mac_Marker_DotPlot.pdf', dpi=900,width=10, height=4.1, units="in")
 
-regulonActivity_byCellType <- sapply(split(rownames(meta), meta$Group),
-                              function(cells) rowMeans(getAUC(regulonAUC)[,cells]))
+################ Fig 2D. Overlay of merged DEP on BAL data ##################
 
-head(regulonActivity_byCellType)
-
-
-AM1_tf<-read.delim("Celltype_Differential_TF/AM_1.TF.network.cluster.diffsIPF_vs_HC.xls")
-AM1_tf<-AM1_tf[AM1_tf$p_val_adj<0.05,]
-AM2_tf<-read.delim("Celltype_Differential_TF/AM_2.TF.network.cluster.diffsIPF_vs_HC.xls")
-AM2_tf<-AM2_tf[AM2_tf$p_val_adj<0.05,]
-AM3_tf<-read.delim("Celltype_Differential_TF/AM_3.TF.network.cluster.diffsIPF_vs_HC.xls")
-AM3_tf<-AM3_tf[AM3_tf$p_val_adj<0.05,]
-CXCL10_tf<-read.delim("Celltype_Differential_TF/CXCL10..AM.TF.network.cluster.diffsIPF_vs_HC.xls")
-CXCL10_tf<-CXCL10_tf[CXCL10_tf$p_val_adj<0.05,]
-SPP1_tf<-read.delim("Celltype_Differential_TF/SPP1..AM.TF.network.cluster.diffsIPF_vs_HC.xls")
-SPP1_tf<-SPP1_tf[SPP1_tf$p_val_adj<0.05,]
+# This should be the spectra of GEP from 5 merged data
+m_Spectra<-read.table("/BatchCorrected/Component_15/BatchCorrected.gene_spectra_score.k_15.dt_0_15.txt", sep='\t', row.names=1, header=TRUE)
+m_Spectra_tpm<-read.table("BatchCorrected.gene_spectra_tpm.k_15.dt_0_15.txt", sep='\t', row.names=1, header=TRUE)
 
 
 
-top20<-c(tail(AM1_tf[order(AM1_tf$avg_log2FC),],20)$TF,tail(AM2_tf[order(AM2_tf$avg_log2FC),],20)$TF,tail(AM3_tf[order(AM3_tf$avg_log2FC),],20)$TF,tail(CXCL10_tf[order(CXCL10_tf$avg_log2FC),],20)$TF,tail(SPP1_tf[order(SPP1_tf$avg_log2FC),],20)$TF)
-union_top20<-unique(top20)
-top20_final<-stringr::str_replace(union_top20, pattern="...$", "(+)")
+exp_mat<-LayerData(BAL, assay="RNA", layer='data')
+common_gene<-intersect(colnames(m_Spectra),rownames(exp_mat))
+
+length(common_gene)
+
+exp_mat_1<-exp_mat[rownames(exp_mat) %in% common_gene,]
+m_Spectra_1<-m_Spectra[,colnames(m_Spectra) %in% common_gene]
+m_Spectra_1_tpm<-m_Spectra_tpm[,colnames(m_Spectra_tpm) %in% common_gene]
+
+all(colnames(m_Spectra_1)==rownames(exp_mat_1))
+
+factor<-t(exp_mat_1)  %*% t(as.matrix(m_Spectra_1))
+colnames(factor)<-paste0("Merged_cNMF_",colnames(factor))
 
 
-TF_regulon<-regulonActivity_byCellType[rownames(regulonActivity_byCellType) %in% top20_final,]
-TF_regulon_Scaled <- t(scale(t(TF_regulon), center = T, scale=T))
+BAL<- AddMetaData(
+  object = BAL,
+  metadata = factor
+)
 
 
-
-cairo_pdf("TOP_TFs_heatmap.pdf", height=10)
-pheatmap::pheatmap(TF_regulon_Scaled,cluster_cols=FALSE,cluster_rows=TRUE, border_color = "black",fontsize_row=7.0)
-dev.off()
-
-
-################ Fig 2E. DotPlot (Regulon Activity comparison between IPF vs HC) ##################
-
-combn1<-read.csv("TF_FCandPadj_table_Mostafavi.csv")
-combn1$Regulon<-combn1$X
-
-
-combn1$Regulon<-stringr::str_replace(combn1$Regulon, pattern="...$", "(+)")
-combn1$X<-NULL
-
-
-
-FC_mat<-combn1[,c(1,3,5,7,9,11)]
-pval_mat<-combn1[,c(2,4,6,8,10,11)]
-
-pcm_fc = melt(FC_mat, id = c("Regulon"))
-pcm_pval = melt(pval_mat, id = c("Regulon"))
+FeaturePlot_scCustom(seurat_object = BAL, features = colnames(factor), num_columns = 2)
+ggsave('merged_cNMF_FeaturePlot.pdf', dpi=900,width=8, height=12, units="in")
 
 
 
-pcm_fc$variable<-gsub("_log2FC","",pcm_fc$variable)
-pcm_pval$variable<-gsub("_Padj","",pcm_pval$variable)
+################ Fig 2E & F. Violin Plot of overlayed GEP ##################
+# Insert usage mtx as assay
+factor[factor<0]<-0
+usage_norm_f<-t(as.matrix(factor))
 
-pcm_fc$adjP<-pcm_pval$value
-
-pcm_fc$adjP1<- -log(pcm_fc$adjP,10)
-pcm_fc$adjP<-NULL
-
- colnames(pcm_fc)<-c("Regulon","Celltype","log2FC","Log10FDR")
+BAL[["cNMF_mOverlay"]]<-CreateAssayObject(usage_norm_f)
 
 
+BAL@active.assay<-"cNMF_mOverlay"
 
-  library(wesanderson)
- pal <- wes_palette("Zissou1", 100, type = "continuous")
- pal
+features<-rownames(BAL@assays$cNMF_mOverlay@counts)
 
-
-
- pcm_fc %>%
-      ggplot(aes(x=Celltype, y = Regulon)) +
-      geom_point( aes(color=log2FC,size= Log10FDR)) +
-      theme_bw()+  labs(size = "-Log10FDR") +scale_size(range = c(1, 8))+
-      theme_linedraw() + theme(panel.grid.major = element_blank()) +
-      theme(axis.text.x = element_text(angle = 45, hjust=1,size=10,face="bold"),axis.text.y = element_text(size=10,face="bold"),plot.margin = margin(0.5, 0.5, 0.5, 1.0, "cm")) +
-      scale_color_gradientn(colours = pal)+
-      geom_vline(xintercept = seq(1.5, length(unique(pcm_fc$Regulon)) - 0.5, 1), lwd = 0.05, colour = "grey92")+
-      geom_hline(yintercept = seq(1.5, length(unique(pcm_fc$Celltype)) - 0.5, 1), lwd = 0.05, colour = "grey93")
+BAL1<-BAL[,(BAL$CellType_v2 %in% c("mono-SPP1+ mac","CXCL10+ AM","FABP4hi AM","IGF1+ AM","CD206hiFN1hi AM","mono-cDC","mono-pDC"))]
+# Set the order after clustering
+BAL1$CellType_v2<-factor(BAL1$CellType_v2,levels=c("mono-SPP1+ mac","CXCL10+ AM","FABP4hi AM","IGF1+ AM","CD206hiFN1hi AM","mono-cDC","mono-pDC"))
 
 
-ggsave('DotPlot_TFComparison_Mostafavi.pdf', dpi=900,width=4, height=6, units="in")
+BAL1@active.assay<-"cNMF_mOverlay"
+Idents(BAL1)<-BAL1$CellType_v2
+
+
+
+# same order as merged cNMF
+features<-c("Usage1","Usage2","Usage4","Usage5","Usage7","Usage6","Usage9","Usage10")
+
+### Save Vertical 8.5 x 8
+plot <- VlnPlot(BAL1, features, stack = TRUE, sort = F, flip = TRUE,same.y.lims = T,y.max=1.0,cols=c("#272E6A","#272E6A","#272E6A","#272E6A","#272E6A","#BF0000","#BF0000","#BF0000","#89C75F","#89C75F","#89C75F","#89C75F")) +theme(axis.text.x = element_text(size = 15))
+ggsave('merged_cNMF_VlnPlot.pdf', dpi=900,width=8, height=8.5, units="in")
+
+
+features1<-c("Usage1","Usage2","Usage4","Usage5","Usage7","Usage6","Usage9","Usage10")
+
+plot2 <- VlnPlot(BAL1, features1, stack = TRUE, sort = F, flip = TRUE,same.y.lims = T,split.by ="Disease" , split.plot=T,cols=c("#008494", "#F47D2B")) +theme(axis.text.x = element_text(size = 15))
+ggsave('merged_cNMF_VlnPlot_DiseaseSplit.pdf', dpi=900,width=8, height=8.5, units="in")
