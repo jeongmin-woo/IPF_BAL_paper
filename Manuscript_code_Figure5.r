@@ -1,170 +1,144 @@
-# Title     : LRT analysis_and_Fig5E
-# Objective : LRT Test of Morse MonoMacs using DESeq2 pipeline
-# Created by: JW
-# Created on: 10/08/2024
-
 
 library(Seurat)
-library(DESeq2)
-library(EnhancedVolcano)
-library(paletteer)
-
-morse <-readRDS("Morse_Myeloid_MAY2024_f.rds")
-Celltype<-as.character(unique(morse$CellType_v2))
-#### LRT #########
-
-morse_sub<-morse[,!(morse$Donor %in% c("SC31DNOR","SC31NOR","SC45NOR","SC14NOR"))]
-table(morse_sub$Disease_Status)
-
-morse_sub$Disease_1<-morse_sub$Disease_Status
-
-morse_sub$Disease_1<-gsub("IPF[(]Lower Lobe[)]","IPF_L",morse_sub$Disease_1)
-morse_sub$Disease_1<-gsub("IPF_L_Mac_Deplet","IPF_L",morse_sub$Disease_1)
-morse_sub$Disease_1<-gsub("IPF[(]Upper Lobe[)]","IPF_U",morse_sub$Disease_1)
-morse_sub$Disease_1<-ifelse(morse_sub$Disease=="Normal","Normal",morse_sub$Disease_1)
+library(ggplot2)
+library(scales)
 
 
-for (i in 1:length(Celltype)) {
+source("/niche_functions.R")
+
+################# Fig 5B. Niche Overlay on spatial ######################
+# Load seurat object after niche identification
+seurat<-readRDS("IPF_xenium.RDS")
 
 
-subs<-morse_sub[,morse_sub$CellType_v2 == Celltype[i]]
+show_col(hue_pal()(8))
+hue_pal()(8)
 
-mtx_aggr<-AggregateExpression(subs,assays = "RNA",slot="count",group.by = "Donor")
-cluster_counts<-as.data.frame(mtx_aggr$RNA)
+my_cols <- c('0'="#F8766D",'1'="#CD9600" ,'2'="#7CAE00",'3'="#00BE67",'4'="#00BFC4" ,'5'="#00A9FF",'6'="#C77CFF",'7'="#FF61CC" ,'8'="#E76BF3",'9'="#FF62BC")
 
-
-################# Metadata generation ################
-
- metadata<-as.data.frame(subs@meta.data)
-
- meta_1<-metadata[,c("Donor","Disease_1")]
-
- meta_f<-unique(meta_1)
-
- rownames(meta_f)<-meta_f$Donor
-
-meta_order<-meta_f[order(meta_f$Disease_1),]
-
- cluster_counts_f<-cluster_counts[,rownames(meta_order)]
-
-meta_final<-meta_order
- ########### DESeq2 Run #########################
-
- meta_final$Sample_Name<-as.factor(meta_final$Donor)
- meta_final$Status<-as.factor(meta_final$Disease_1)
-
- dds <- DESeqDataSetFromMatrix(cluster_counts_f,
-                               colData = meta_final,
-                               design = ~ Status)
-
-
- #Prefilter
- dds <- dds[rowSums(counts(dds))> 3, ]
- rld <- rlog(dds, blind=TRUE)
-
-LRT_DEG<-read.csv(paste0(Celltype[i],"_Cluster_annotation.csv"))
-
- DEG_mat<-as.data.frame(assay(rld)[rownames(assay(rld)) %in% LRT_DEG$X,])
-
-DEG_mat$IPF_L_median = rowMedians(as.matrix(DEG_mat[,1:5]))
-DEG_mat$IPF_U_median = rowMedians(as.matrix(DEG_mat[,6:8]))
-DEG_mat$HC_median = rowMedians(as.matrix(DEG_mat[,9:12]))
-
-DEG_mat$Cluster<-LRT_DEG$Cluster
-
-write.csv(DEG_mat,paste0(Celltype[i],"_Normalised_Expression_mat.csv"))
-
-
-DEG_mat_1<-DEG_mat[,13:15]
-DEG_mat_1$gene<-rownames(DEG_mat_1)
-data1<-melt(DEG_mat_1)
-
-
-data1$Cluster<-ifelse((data1$gene) %in% LRT_DEG[LRT_DEG$Cluster =="1",]$X, "1","2")
-
-
-
-data1$Cluster<-data1$gene
-
-data1$Cluster<-ifelse((data1$gene) %in% LRT_DEG[LRT_DEG$Cluster =="1",]$X, "1",data1$gene)
-data1$Cluster<-ifelse((data1$gene) %in% LRT_DEG[LRT_DEG$Cluster =="2",]$X, "2",data1$Cluster)
-data1$Cluster<-ifelse((data1$gene) %in% LRT_DEG[LRT_DEG$Cluster =="3",]$X, "3",data1$Cluster)
-data1$Cluster<-ifelse((data1$gene) %in% LRT_DEG[LRT_DEG$Cluster =="4",]$X, "4",data1$Cluster)
-
-
-
-########## Fig 5E BarPlot ######################
-
-p<-ggplot(data1, aes(variable,value, fill=Cluster)) +
-     geom_boxplot()+
-
-     # geom_line() joins the paired datapoints
-     # color and size parameters are used to customize line
-     geom_line(aes(group = gene), size=0.3, color='gray60', alpha=0.4)+
-
-     # geom_point() is used to make points at data values
-     # fill and size parameters are used to customize point
-     geom_point(aes(fill=Cluster,group=gene),size=3,shape=21)
-
-
-cairo_pdf(paste0(Celltype[i],"_boxPlot.pdf"),width=7, height=5)
-print(p)
+cairo_pdf("niche_overlay_spatial_slide_expression_method_k35.pdf", onefile = T)
+for( image in Images(seurat)){
+  
+  print(ImageDimPlot(seurat,fov=image, border.size = NA, group.by = "Expr.Niches_k35",cols=my_cols) + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()))
+  
+}
 dev.off()
 
+################# Fig 5C. Niche Overlay on spatial (Niche highlight) ######################
 
+setwd("/Niche_Highlight")
+
+Niches<-levels(unique(seurat$Expr.Niches_k35))
+for (i in 1:length(Niches)) {
+  seurat$Niche_ID<-seurat$Expr.Niches_k35
+  seurat$Niche_ID<-ifelse(seurat$Niche_ID ==Niches[i],Niches[i],NA)
+  
+  cairo_pdf(paste0(Niches[i],"_overlay_spatial_slide_expression_method_k35.pdf"), onefile = T)
+  for( image in Images(seurat)){
+    
+    print(ImageDimPlot(seurat, fov=image, group.by = "Niche_ID",border.size = NA,cols=my_cols[i]) + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()))
+    
+  }
+  dev.off()
+  
 }
 
 
-########## Fig 5F. Pathway analysis ######################
-
-# (Repeated for each clusters for Celltypes)
-
-library(clusterProfiler)
-library(enrichplot)
-library(org.Hs.eg.db)
-library(ggnewscale)
-library(fgsea)
-library(dplyr)
-library(msigdbr)
-
-Gene_anno<-read.csv("Cluster_annotation.csv")
-
-Gene_GO<-Gene_anno[Gene_anno$Cluster =="1",]
-gene_up<-as.vector(Gene_GO$X)
+################# Fig 5D. Celltype Enrichment BarPlot ######################
 
 
-########## GO  #########
+df <- CellTypeNicheEnrichment(seurat$Niche_ID, seurat$Celltype)
+cairo_pdf("niche_cell_type_enrichment_barplots_per_niche_expression_method.pdf", onefile = T)
+
+for( niche in levels( unique(seurat$Niche_ID)) ){
+  
+  print(PlotCellTypeNicheEnrichmentBarPlot(df, niche=niche))
+  
+}
+dev.off()
+
+################ Fig 5E. Celltype Enrichment Heatmap  ######################
+
+df2<-df[df$Cell.Type %in% c("IMs","Mast Cells","ncMono","cMono","NK Cells","MonoMac","cDC2","Cycling cells","CD8 T cells","CD4 T cells","CD103posCD4 T cells","Tregs","CXCL10+ Mono-Macs","cDC1","Plasma Cells","SPP1 Macs","pDCs","B Cells","Intm AM","FABP4 AM","CD206hi FN1hi AM"),]
+
+niche.results<-df2
+
+niche.results$Estimate <- as.numeric(niche.results$Estimate)
+mat <- log2(reshape2::acast(niche.results, `Cell.Type`~ Niche, value.var = "Estimate")+ 0.01)
+niche.results$STAR <- "n.s"; niche.results$STAR[niche.results$FDR < 0.05] <- "*"; niche.results$STAR[niche.results$FDR < 0.01] <- "**"; niche.results$STAR[niche.results$FDR < 0.001] <- "***"
+mat.labels <-reshape2::acast(niche.results, `Cell.Type`~ Niche, value.var = "STAR")
+mat[mat < -4] <- -4; mat[ mat > 4] <- 4
+pheatmap::pheatmap(mat, border_color = "black", display_numbers = mat.labels, fontsize_number = 14,
+                   color=Seurat:::SpatialColors(n=100), number_color = "black" )
 
 
-ego_up<-enrichGO(gene_up,OrgDb = org.Hs.eg.db,keyType = "SYMBOL",ont="all",pAdjustMethod = "BH",pvalueCutoff = 0.05,qvalueCutoff = 0.05)
-
-head(summary(ego_up))
-
-ego_up
-
-cluster_summary<-data.frame(ego_up)
-
-write.table(cluster_summary,"Cluster1_GO.txt",sep="\t")
-
-dotplot(ego_up, split="ONTOLOGY",label_format=100) + facet_grid(ONTOLOGY~., scale="free") + scale_fill_viridis(direction = -1)
+cairo_pdf("niche_cell_type_enrichment_heatmap_Immune_Grp1.pdf")
+print(pheatmap::pheatmap(mat, border_color = "black", display_numbers = mat.labels, fontsize_number = 14,
+                         color=Seurat:::SpatialColors(n=100), number_color = "black" )
+)
+dev.off()
 
 
-
-ego_BP<-enrichGO(gene_up, OrgDb= org.Mm.eg.db,keyType = "SYMBOL",ont="BP",pAdjustMethod = "BH",pvalueCutoff = 0.05,qvalueCutoff = 0.05)
-dotplot(ego_BP,showCategory=20,label_format=100)+ scale_fill_viridis(direction = -1)
-
-ego2_BP <- simplify(ego_BP)
-dotplot(ego2_BP,showCategory=20,label_format=100)+ scale_fill_viridis(direction = -1)
-
-cnetplot(ego2_BP, colorEdge = TRUE)
+################ Fig 5F. T1_IFN_Module Score group overlay  ######################
 
 
-########## Reactome #########
+genes<- c("CXCL10", "CXCL9", "ISG15","MX1","IFIT1","IFIT3","RSAD2","STAT1","STAT2","IRF9","IRF1")
 
-gmtfile<-"h.all.v6.1.symbols.gmt"
-Hallmark<-read.gmt(gmtfile)
-enrich_Hallmark<-enricher(gene,TERM2GENE = Hallmark,minGSSize = 1,maxGSSize = 1000)
+# module score calculation
+seurat <- AddModuleScore(
+  object = seurat,
+  features = list(genes),
+  ctrl = 10,
+  name = 'T1_IFN_ModuleScore'
+)
 
-cluster_summary<-data.frame(enrich_Hallmark)
-write.table(cluster_summary,"Cluster1_enrichment.txt",sep="\t")
-dotplot(enrich_Hallmark,showCategory=32)
+# Pick cells with upper 10% module scores 
+
+meta<-seurat@meta.data
+
+meta1<-meta[meta$SAMPLE_ID=="S1",]
+meta$T1_IFN_ModuleScore2<-ifelse(meta$T1_IFN_ModuleScore1 > quantile(meta1$T1_IFN_ModuleScore1,0.9) & meta$SAMPLE_ID=="S1" ,"High","Low" )
+
+meta1<-meta[meta$SAMPLE_ID=="S2",]
+meta$T1_IFN_ModuleScore2<-ifelse(meta$T1_IFN_ModuleScore1 > quantile(meta1$T1_IFN_ModuleScore1,0.9) & meta$SAMPLE_ID=="S2" ,"High",meta$T1_IFN_ModuleScore2 )
+
+meta1<-meta[meta$SAMPLE_ID=="S3",]
+meta$T1_IFN_ModuleScore2<-ifelse(meta$T1_IFN_ModuleScore1 > quantile(meta1$T1_IFN_ModuleScore1,0.9) & meta$SAMPLE_ID=="S3" ,"High",meta$T1_IFN_ModuleScore2 )
+
+meta1<-meta[meta$SAMPLE_ID=="S4",]
+meta$T1_IFN_ModuleScore2<-ifelse(meta$T1_IFN_ModuleScore1 > quantile(meta1$T1_IFN_ModuleScore1,0.9) & meta$SAMPLE_ID=="S4" ,"High",meta$T1_IFN_ModuleScore2 )
+
+meta1<-meta[meta$SAMPLE_ID=="S5",]
+meta$T1_IFN_ModuleScore2<-ifelse(meta$T1_IFN_ModuleScore1 > quantile(meta1$T1_IFN_ModuleScore1,0.9) & meta$SAMPLE_ID=="S5" ,"High",meta$T1_IFN_ModuleScore2 )
+
+seurat$T1_IFN_ModuleScore2<-meta$T1_IFN_ModuleScore2
+
+seurat$T1_IFN_ModuleScore2<-factor(seurat$T1_IFN_ModuleScore2,levels = c("High","Low"))
+
+cairo_pdf("T1_IFN_moduelscore_slides_top10pc.pdf", onefile = T)
+for( image in Images(seurat)){
+  
+  print(ImageDimPlot(seurat, fov=image,border.size = NA,group.by = "T1_IFN_ModuleScore2",cols=c("#FDE725FF","#414487FF")))
+  
+}
+dev.off()
+
+#Highlight on individual niche
+
+xen$T1_IFN_ModuleScore4<-xen$T1_IFN_ModuleScore2
+xen$T1_IFN_ModuleScore4<-ifelse(!(xen$Expr.Niches_k35=="0"),NA,xen$T1_IFN_ModuleScore4)
+xen$T1_IFN_ModuleScore4<-gsub("1","High",xen$T1_IFN_ModuleScore4)
+xen$T1_IFN_ModuleScore4<-gsub("2","Low",xen$T1_IFN_ModuleScore4)
+
+xen$T1_IFN_ModuleScore4<-factor(xen$T1_IFN_ModuleScore4,levels = c("High","Low"))
+
+cairo_pdf("T1_IFN_moduelscore_slides_top10pc_Niche0.pdf", onefile = T)
+for( image in Images(xen)){
+  
+  print(ImageDimPlot(xen, fov=image,border.size = NA,group.by = "T1_IFN_ModuleScore4",cols=c("#FDE725FF","#414487FF"))+ theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) )
+  
+}
+dev.off()
+
+
+
