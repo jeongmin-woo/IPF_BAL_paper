@@ -2,7 +2,7 @@
 
 This repository contains the R scripts and analysis workflows used in the study:
 
-> *Type 1 interferon-activated myeloid states localize to earlier fibrotic remodelling niches in idiopathic pulmonary fibrosis*
+> *Type I interferon–activated myeloid states are associated with less fibrotic stages in idiopathic pulmonary fibrosis*
 
 ## Contents
 
