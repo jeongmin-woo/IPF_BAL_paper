@@ -1,0 +1,12 @@
+{
+  "title": "Type I interferon–activated myeloid states localize to earlier fibrotic remodelling niches in idiopathic pulmonary fibrosis",
+  "upload_type": "software",
+  "description": "R scripts and workflows for processing and visualizing scRNA-seq and Xenium IPF BAL data.",
+  "creators": [
+    {
+      "name": "Woo, Jeongmin",
+      "affiliation": "University of Oxford"
+    }
+  ],
+  "license": "MIT"
+}
