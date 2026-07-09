@@ -1,12 +1,20 @@
 {
   "title": "Type I interferon–activated myeloid states localize to earlier fibrotic remodelling niches in idiopathic pulmonary fibrosis",
+"description": "Analysis workflows and R scripts accompanying the accepted manuscript on single-cell RNA sequencing and Xenium spatial transcriptomics analysis of bronchoalveolar lavage samples from idiopathic pulmonary fibrosis.",
   "upload_type": "software",
-  "description": "R scripts and workflows for processing and visualizing scRNA-seq and Xenium IPF BAL data.",
   "creators": [
     {
       "name": "Woo, Jeongmin",
       "affiliation": "University of Oxford"
     }
+  ],
+  "keywords": [
+    "R",
+    "Seurat",
+    "single-cell RNA-seq",
+    "spatial transcriptomics",
+    "Xenium",
+    "idiopathic pulmonary fibrosis"
   ],
   "license": "MIT"
 }
